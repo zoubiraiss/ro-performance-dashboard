@@ -1,12 +1,19 @@
 #main application file
-from dotenv import load_dotenv
+#- after using streamlit could ingnore this from dotenv import load_dotenv
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import os
 
-load_dotenv()
+#after using streamlit could ingnore this  load_dotenv()
+
+try:
+    GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
+except:
+    from dotenv import load_dotenv
+    load_dotenv()
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # ─── Page config ───────────────────────────────────────────
 st.set_page_config(page_title="RO Performance Dashboard",
