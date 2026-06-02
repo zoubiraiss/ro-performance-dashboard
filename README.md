@@ -15,7 +15,7 @@ Python, Pandas, Streamlit, Plotly, Google Gemini API
 
 ## How to run
 pip install -r requirements.txt
-streamlit run ro_dashboard.py
+streamlit run ro_performance_dashboard.py
 
 ## Data required
 Excel file with columns:

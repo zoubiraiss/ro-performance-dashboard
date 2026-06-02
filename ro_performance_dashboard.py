@@ -6,7 +6,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import os
 
-#after using streamlit could ingnore this  load_dotenv()
+#after using streamlit could ingnore this  load_dotenv()dir
 
 try:
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
