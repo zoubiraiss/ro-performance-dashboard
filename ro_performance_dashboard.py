@@ -5,6 +5,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import os
+import numpy as np
 
 #after using streamlit could ingnore this  load_dotenv()dir
 
@@ -29,18 +30,19 @@ def load_data(file):
 
     # Rename columns to clean names
     df = df.rename(columns={
-        'date':               'date',
-        'Train':              'train',
-        'temperator':         'temperature',
-        'feed water':         'feed_flow',
-        'reject water':       'reject_flow',
-        'permeit flow':       'permeate_flow',
-        'pressur':            'pressure',
-        'condictiviy ':       'permeate_conductivity',
-        'tds':                'tds',
-        'ph':                 'ph',
-        'condictivity feed':  'feed_conductivity'
-    })
+                            'date':               'date',
+                            'Train':              'train',
+                            'temperator':         'temperature',
+                            'feed water':         'feed_flow',
+                            'reject water':       'reject_flow',
+                            'permeit flow':       'permeate_flow',
+                            'pressur':            'pressure',
+                            'condictiviy ':       'permeate_conductivity',
+                            'tds':                'tds',
+                            'ph':                 'ph',
+                            'condictivity feed':  'feed_conductivity',
+                            'dp':                 'dp'
+                             })
 
     # Fix inconsistent train names
     df['train'] = (df['train']
@@ -52,29 +54,85 @@ def load_data(file):
     df['recovery_rate']   = df['permeate_flow'] / df['feed_flow'] * 100
     df['salt_rejection']  = (1 - df['permeate_conductivity'] /
                              df['feed_conductivity']) * 100
+    
+    # ── Normalized DP (CPA7-LD-4040 Hydranautics TCF formula) ───
+
+    df['TCF']           = np.exp(2640 * (1/(273 + df['temperature']) - 1/298))
+    df['normalized_dp'] = df['dp'] * df['TCF']
 
     return df
 
 # ─── Anomaly detection ─────────────────────────────────────
 def detect_anomalies(df):
-    flags = []
-    for _, row in df.iterrows():
-        issues = []
-        if pd.notna(row['ph']) and (row['ph'] > 8.5 or row['ph'] < 8.0):
-            issues.append(f"pH abnormal: {row['ph']}")
-        if pd.notna(row['permeate_conductivity']) and row['permeate_conductivity'] > 150:
-            issues.append(f"High conductivity: {row['permeate_conductivity']:.1f} μS/cm")
-        if pd.notna(row['recovery_rate']) and row['recovery_rate'] < 70:
-            issues.append(f"Low recovery: {row['recovery_rate']:.1f}%")
-        if pd.notna(row['salt_rejection']) and row['salt_rejection'] < 85:
-            issues.append(f"Low salt rejection: {row['salt_rejection']:.1f}%")
-        if issues:
-            flags.append({
-                'date':  row['date'].strftime('%Y-%m-%d'),
-                'train': row['train'],
-                'flags': ' | '.join(issues)
-            })
-    return pd.DataFrame(flags)
+    conditions =(
+        df['ph'].notna() & ((df['ph'] > 9.0) | (df['ph'] < 7.0))|
+        df['permeate_conductivity'].notna() & (df['permeate_conductivity'] > 125)|
+        df['recovery_rate'].notna() & (df['recovery_rate'] < 70)|
+        df['salt_rejection'].notna() & (df['salt_rejection'] < 85)|
+        # this condition need to chek from the manual of the ro unit
+        df['dp'].notna() & (df['dp'] > 6.5)
+    )
+
+       # Step 1 — filter the DataFrame to only flagged rows
+    flagged = df[conditions].copy()
+
+    # Step 2 — create empty flags column
+    flagged['flags'] = ''
+
+    # Step 3 — add description for each condition using .loc
+    flagged.loc[flagged['ph'].notna() & ((flagged['ph'] > 9.0) | (flagged['ph'] < 7.0)), 'flags'] += 'pH abnormal | '
+    flagged.loc[flagged['permeate_conductivity'].notna() & (flagged['permeate_conductivity'] > 125), 'flags'] += 'High conductivity | '
+    flagged.loc[flagged['recovery_rate'].notna() & (flagged['recovery_rate'] < 70), 'flags'] += 'Low recovery | '
+    flagged.loc[flagged['salt_rejection'].notna() & (flagged['salt_rejection'] < 85), 'flags'] += 'Low salt rejection | '
+    flagged.loc[flagged['dp'].notna() & (flagged['dp'] > 6.5), 'flags'] += 'High DP — check CIP | '
+
+    # Step 4 — return clean result
+    return flagged[['date', 'train', 'flags']].reset_index(drop=True)
+
+def cip_recommendation(df):
+    recommendations = []
+
+    for train in df['train'].unique():
+        train_data = df[df['train'] == train].sort_values('date')
+
+        latest_dp = train_data['dp'].iloc[-1]
+        first_dp = train_data['dp'].tail(7).iloc[0]
+        dp_trend = latest_dp - first_dp
+
+        if latest_dp > 6.8:
+            status = "🔴 ACTION REQUIRED — Start CIP immediately"
+        elif latest_dp > 6.5:
+            status = "🟡 WARNING — Approaching CIP threshold"
+        else:
+            status = "🟢 Normal operation"
+
+        if dp_trend > 0:
+            margin = 6.5 - latest_dp
+            daily_rise = dp_trend / 7
+            days_until_warning = int(margin / daily_rise) if daily_rise > 0 else 999
+        else:
+            days_until_warning = 999
+
+        if latest_dp > 6.5:
+            feed_conductivity = train_data['feed_conductivity'].tail(7).mean()
+            if feed_conductivity > 1500:
+                cip_type = "Acid wash recommended — high feed TDS indicates scaling"
+            else:
+                cip_type = "Base wash recommended — biological fouling likely"
+        else:
+            cip_type = "No CIP needed at this time"
+
+        recommendations.append({
+            'train': train,
+            'latest_dp': round(latest_dp, 2),
+            'dp_trend_7days': round(dp_trend, 3),
+            'status': status,
+            'days_to_warning': days_until_warning if days_until_warning < 999 else "Not imminent",
+            'cip_type': cip_type
+        })
+
+    return pd.DataFrame(recommendations)
+
 
 # ─── App ───────────────────────────────────────────────────
 st.title("RO Unit Performance Dashboard")
@@ -150,7 +208,7 @@ if uploaded_file:
                        color='train', markers=True,
                        labels={'permeate_conductivity': 'Conductivity (μS/cm)'})
         fig3.update_traces(connectgaps=True)
-        fig3.add_hline(y=150, line_dash="dash",
+        fig3.add_hline(y=125, line_dash="dash",
                        line_color="red", annotation_text="Alert threshold")
         st.plotly_chart(fig3, use_container_width=True)
 
@@ -161,6 +219,22 @@ if uploaded_file:
                        labels={'pressure': 'Pressure (bar)'})
         fig4.update_traces(connectgaps=True)
         st.plotly_chart(fig4, use_container_width=True)
+    
+    # ── Normalized DP trend ────────────────────────────────────
+    st.subheader("Normalized differential pressure trend")
+    st.caption("Temperature-corrected to 25°C — CPA7-LD-4040 Hydranautics specification")
+
+    fig_dp = px.line(filtered, x='date', y='normalized_dp',
+                     color='train', markers=True,
+                     labels={'normalized_dp': 'Normalized DP (bar)'})
+    fig_dp.add_hline(y=6.5, line_dash="dash",
+                     line_color="orange",
+                     annotation_text="Watch: 6.5 bar")
+    fig_dp.add_hline(y=6.8, line_dash="dash",
+                     line_color="red",
+                     annotation_text="CIP required: 6.8 bar")
+    fig_dp.update_traces(connectgaps=True)
+    st.plotly_chart(fig_dp, use_container_width=True)
 
     st.divider()
 
@@ -173,7 +247,81 @@ if uploaded_file:
         st.error(f"{len(anomalies)} anomalies detected")
         st.dataframe(anomalies, use_container_width=True)
 
+    # ── Generate Flagged Report ────────────────────────────────
     st.divider()
+    st.subheader("📋 Generate Report")
+
+    anomalies = detect_anomalies(filtered)
+
+    if not anomalies.empty:
+        import io
+        buffer = io.BytesIO()
+        
+        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+            # Sheet 1 — Flagged anomalies
+            anomalies.to_excel(writer, sheet_name='Anomalies', index=False)
+            
+            # Sheet 2 — KPI Summary
+            summary = pd.DataFrame({
+                'KPI': [
+                    'Avg Recovery Rate',
+                    'Avg Salt Rejection',
+                    'Avg DP',
+                    'Avg Permeate Conductivity',
+                    'Avg Temperature',
+                    'Total Anomalies Detected'
+                ],
+                'Value': [
+                    f"{filtered['recovery_rate'].mean():.1f}%",
+                    f"{filtered['salt_rejection'].mean():.1f}%",
+                    f"{filtered['dp'].mean():.2f} bar",
+                    f"{filtered['permeate_conductivity'].mean():.1f} μS/cm",
+                    f"{filtered['temperature'].mean():.1f} °C",
+                    str(len(anomalies))
+                ]
+            })
+            summary.to_excel(writer, sheet_name='KPI Summary', index=False)
+
+        buffer.seek(0)
+        
+        filename = f"RO_report_{pd.Timestamp.now().strftime('%Y%m%d')}.xlsx"
+        
+        st.download_button(
+            label="⬇ Download Anomaly Report (Excel)",
+            data=buffer,
+            file_name=filename,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        
+        st.caption(f"Report includes {len(anomalies)} flagged readings across 2 sheets.")
+
+    else:
+        st.success("No anomalies detected — no report needed.")
+
+    # ── CIP Recommendations ─────────────────────────────────
+    st.divider()
+    st.subheader("🔧 CIP Recommendation Engine")
+    st.caption("Based on contractor specification: Watch > 6.5 bar | Action > 6.8 bar")
+
+    cip_df = cip_recommendation(filtered)
+
+    for _, row in cip_df.iterrows():
+        st.markdown(f"### {row['train']}")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Current DP", f"{row['latest_dp']} bar",
+                    delta=f"{row['dp_trend_7days']:+.3f} bar (7-day trend)")
+        col2.metric("Days to warning threshold", str(row['days_to_warning']))
+        col3.metric("CIP status", "Required" if row['latest_dp'] > 6.8 else "Not required")
+
+        if "🔴" in row['status']:
+            st.error(row['status'])
+        elif "🟡" in row['status']:
+            st.warning(row['status'])
+        else:
+            st.success(row['status'])
+
+        st.info(f"**Recommendation:** {row['cip_type']}")
+        st.divider()
 
     # ── Raw data ───────────────────────────────────────────
     with st.expander("View raw data"):
@@ -187,13 +335,21 @@ st.caption("Ask anything about your RO unit performance")
 
 # Build data context from live DataFrame
 def build_context(df):
-    anomalies = detect_anomalies(df)
-    anomaly_text = anomalies.to_string() if not anomalies.empty else "No anomalies detected"
+    # Safe helper — returns value or fallback if train not in data
+    def get_latest(train_name, column):
+        subset = df[df['train'].str.contains(train_name)]
+        if subset.empty:
+            return 'No data'
+        return f"{subset[column].iloc[-1]:.2f}"
+
+    def get_mean(train_name, column):
+        subset = df[df['train'].str.contains(train_name)]
+        if subset.empty:
+            return 'No data'
+        return f"{subset[column].mean():.2f}"
 
     return f"""
-You are an expert RO (Reverse Osmosis) system engineer assistant at Sonatrach, Algeria.
-You help operators understand their RO unit performance and take corrective actions.
-Answer in clear, simple language suitable for field operators.
+You are an expert RO system engineer at Sonatrach, Algeria.
 
 CURRENT PERFORMANCE DATA:
 - Date range: {df['date'].min().date()} to {df['date'].max().date()}
@@ -205,14 +361,19 @@ CURRENT PERFORMANCE DATA:
 - Average permeate conductivity: {df['permeate_conductivity'].mean():.1f} μS/cm
 - Average feed conductivity: {df['feed_conductivity'].mean():.1f} μS/cm
 
-ANOMALIES DETECTED:
-{anomaly_text}
+DIFFERENTIAL PRESSURE:
+- Average DP Train 1: {get_mean('Train 1', 'dp')} bar
+- Average DP Train 2: {get_mean('Train 2', 'dp')} bar
+- Latest DP Train 1: {get_latest('Train 1', 'dp')} bar
+- Latest DP Train 2: {get_latest('Train 2', 'dp')} bar
+- DP contractor thresholds: Watch at 6.5 bar, CIP required at 6.8 bar
 
 LAST 3 READINGS:
-{df[['date','train','recovery_rate','salt_rejection',
-     'permeate_conductivity','pressure','feed_conductivity']].tail(3).to_string()}
+{df[['date', 'train', 'recovery_rate', 'salt_rejection',
+     'permeate_conductivity', 'pressure', 'dp']].tail(3).to_string()}
 
 Answer based on this data. If asked about something not in the data, say so clearly.
+Answer in clear language suitable for field operators.
 """
 
 # Initialize chat history
