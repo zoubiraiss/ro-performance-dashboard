@@ -3,3 +3,5 @@
 pycache
 .db
 .pyc
+*.xlsx
+*.xls
