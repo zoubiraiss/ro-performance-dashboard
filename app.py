@@ -7,6 +7,10 @@ import plotly.graph_objects as go
 import os
 import numpy as np
 from ai.rag import load_vectorstore, ask_document
+from data.loader import load_data
+from analytics.anomalies import detect_anomalies
+from analytics.cip import cip_recommendation
+from ai.assistant import build_context, build_full_context
 
 
 @st.cache_resource
@@ -27,118 +31,10 @@ except:
 st.set_page_config(page_title="RO Performance Dashboard",
                    layout="wide")
 
-# ─── Load and clean data ───────────────────────────────────
-@st.cache_data
-def load_data(file):
-    df = pd.read_excel(file)
 
-    # Drop empty columns
-    df = df.loc[:, ~df.columns.str.startswith('Unnamed')]
-
-    # Rename columns to clean names
-    df = df.rename(columns={
-                            'date':               'date',
-                            'Train':              'train',
-                            'temperator':         'temperature',
-                            'feed water':         'feed_flow',
-                            'reject water':       'reject_flow',
-                            'permeit flow':       'permeate_flow',
-                            'pressur':            'pressure',
-                            'condictiviy ':       'permeate_conductivity',
-                            'tds':                'tds',
-                            'ph':                 'ph',
-                            'condictivity feed':  'feed_conductivity',
-                            'dp':                 'dp'
-                             })
-
-    # Fix inconsistent train names
-    df['train'] = (df['train']
-                   .str.replace('Train1', 'Train 1', regex=False)
-                   .str.replace('Train2', 'Train 2', regex=False)
-                   .str.strip())
-
-    # Calculate KPIs
-    df['recovery_rate']   = df['permeate_flow'] / df['feed_flow'] * 100
-    df['salt_rejection']  = (1 - df['permeate_conductivity'] /
-                             df['feed_conductivity']) * 100
-    
-    # ── Normalized DP (CPA7-LD-4040 Hydranautics TCF formula) ───
-
-    df['TCF']           = np.exp(2640 * (1/(273 + df['temperature']) - 1/298))
-    df['normalized_dp'] = df['dp'] * df['TCF']
-
-    return df
 
 # ─── Anomaly detection ─────────────────────────────────────
-def detect_anomalies(df):
-    conditions =(
-        df['ph'].notna() & ((df['ph'] > 9.0) | (df['ph'] < 7.0))|
-        df['permeate_conductivity'].notna() & (df['permeate_conductivity'] > 125)|
-        df['recovery_rate'].notna() & (df['recovery_rate'] < 70)|
-        df['salt_rejection'].notna() & (df['salt_rejection'] < 85)|
-        # this condition need to chek from the manual of the ro unit
-        df['dp'].notna() & (df['dp'] > 6.5)
-    )
 
-       # Step 1 — filter the DataFrame to only flagged rows
-    flagged = df[conditions].copy()
-
-    # Step 2 — create empty flags column
-    flagged['flags'] = ''
-
-    # Step 3 — add description for each condition using .loc
-    flagged.loc[flagged['ph'].notna() & ((flagged['ph'] > 9.0) | (flagged['ph'] < 7.0)), 'flags'] += 'pH abnormal | '
-    flagged.loc[flagged['permeate_conductivity'].notna() & (flagged['permeate_conductivity'] > 125), 'flags'] += 'High conductivity | '
-    flagged.loc[flagged['recovery_rate'].notna() & (flagged['recovery_rate'] < 70), 'flags'] += 'Low recovery | '
-    flagged.loc[flagged['salt_rejection'].notna() & (flagged['salt_rejection'] < 85), 'flags'] += 'Low salt rejection | '
-    flagged.loc[flagged['dp'].notna() & (flagged['dp'] > 6.5), 'flags'] += 'High DP — check CIP | '
-
-    # Step 4 — return clean result
-    return flagged[['date', 'train', 'flags']].reset_index(drop=True)
-
-def cip_recommendation(df):
-    recommendations = []
-
-    for train in df['train'].unique():
-        train_data = df[df['train'] == train].sort_values('date')
-
-        latest_dp = train_data['dp'].iloc[-1]
-        first_dp = train_data['dp'].tail(7).iloc[0]
-        dp_trend = latest_dp - first_dp
-
-        if latest_dp > 6.8:
-            status = "🔴 ACTION REQUIRED — Start CIP immediately"
-        elif latest_dp > 6.5:
-            status = "🟡 WARNING — Approaching CIP threshold"
-        else:
-            status = "🟢 Normal operation"
-
-        if dp_trend > 0:
-            margin = 6.5 - latest_dp
-            daily_rise = dp_trend / 7
-            days_until_warning = int(margin / daily_rise) if daily_rise > 0 else 999
-        else:
-            days_until_warning = 999
-
-        if latest_dp > 6.5:
-            feed_conductivity = train_data['feed_conductivity'].tail(7).mean()
-            if feed_conductivity > 1500:
-                cip_type = "Acid wash recommended — high feed TDS indicates scaling"
-            else:
-                cip_type = "Base wash recommended — biological fouling likely"
-        else:
-            cip_type = "No CIP needed at this time"
-
-        recommendations.append({
-            'train': train,
-            'latest_dp': round(latest_dp, 2),
-            'dp_trend_7days': round(dp_trend, 3),
-            'status': status,
-            'days_to_warning': days_until_warning if days_until_warning < 999 else "Not imminent",
-            'cip_type': cip_type
-        })
-
-    return pd.DataFrame(recommendations)
 
 
 # ─── App ───────────────────────────────────────────────────
@@ -343,66 +239,7 @@ st.subheader("🤖 RO Assistant")
 st.caption("Ask anything about your RO unit performance")
 
 # Build data context from live DataFrame
-def build_context(df):
-    # Safe helper — returns value or fallback if train not in data
-    def get_latest(train_name, column):
-        subset = df[df['train'].str.contains(train_name)]
-        if subset.empty:
-            return 'No data'
-        return f"{subset[column].iloc[-1]:.2f}"
 
-    def get_mean(train_name, column):
-        subset = df[df['train'].str.contains(train_name)]
-        if subset.empty:
-            return 'No data'
-        return f"{subset[column].mean():.2f}"
-
-    return f"""
-You are an expert RO system engineer at Sonatrach, Algeria.
-
-CURRENT PERFORMANCE DATA:
-- Date range: {df['date'].min().date()} to {df['date'].max().date()}
-- Trains monitored: {', '.join(df['train'].unique())}
-- Average recovery rate: {df['recovery_rate'].mean():.1f}%
-- Average salt rejection: {df['salt_rejection'].mean():.1f}%
-- Average pressure: {df['pressure'].mean():.2f} bar
-- Average temperature: {df['temperature'].mean():.1f} °C
-- Average permeate conductivity: {df['permeate_conductivity'].mean():.1f} μS/cm
-- Average feed conductivity: {df['feed_conductivity'].mean():.1f} μS/cm
-
-DIFFERENTIAL PRESSURE:
-- Average DP Train 1: {get_mean('Train 1', 'dp')} bar
-- Average DP Train 2: {get_mean('Train 2', 'dp')} bar
-- Latest DP Train 1: {get_latest('Train 1', 'dp')} bar
-- Latest DP Train 2: {get_latest('Train 2', 'dp')} bar
-- DP contractor thresholds: Watch at 6.5 bar, CIP required at 6.8 bar
-
-LAST 3 READINGS:
-{df[['date', 'train', 'recovery_rate', 'salt_rejection',
-     'permeate_conductivity', 'pressure', 'dp']].tail(3).to_string()}
-
-Answer based on this data. If asked about something not in the data, say so clearly.
-Answer in clear language suitable for field operators.
-"""
-
-def build_full_context(df, vectorstore, question):
-    # Live sensor data context (your existing function)
-    live_context = build_context(df)
-
-    # Search the reference documents for relevant chunks
-    doc_results = vectorstore.similarity_search(question, k=3)
-    doc_context = "\n\n".join([doc.page_content for doc in doc_results])
-
-    return f"""
-{live_context}
-
-REFERENCE DOCUMENTATION (membrane datasheet, CIP procedures):
-{doc_context}
-
-Answer using BOTH the live sensor data above AND the reference
-documentation above, whichever is relevant to the question. If asked
-about something in neither source, say so clearly.
-"""
 
 # Initialize chat history
 if "chat_history" not in st.session_state:
