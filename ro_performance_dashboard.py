@@ -6,6 +6,13 @@ import plotly.express as px
 import plotly.graph_objects as go
 import os
 import numpy as np
+from ai.rag import load_vectorstore, ask_document
+
+
+@st.cache_resource
+def get_vectorstore():
+    return load_vectorstore()
+
 
 #after using streamlit could ingnore this  load_dotenv()dir
 
@@ -139,6 +146,8 @@ st.title("RO Unit Performance Dashboard")
 st.caption("GRN — Reverse Osmosis Monitoring System")
 
 uploaded_file = st.file_uploader("Upload RO data (Excel)", type=["xlsx", "xls"])
+
+
 
 if uploaded_file:
     df = load_data(uploaded_file)
@@ -376,6 +385,25 @@ Answer based on this data. If asked about something not in the data, say so clea
 Answer in clear language suitable for field operators.
 """
 
+def build_full_context(df, vectorstore, question):
+    # Live sensor data context (your existing function)
+    live_context = build_context(df)
+
+    # Search the reference documents for relevant chunks
+    doc_results = vectorstore.similarity_search(question, k=3)
+    doc_context = "\n\n".join([doc.page_content for doc in doc_results])
+
+    return f"""
+{live_context}
+
+REFERENCE DOCUMENTATION (membrane datasheet, CIP procedures):
+{doc_context}
+
+Answer using BOTH the live sensor data above AND the reference
+documentation above, whichever is relevant to the question. If asked
+about something in neither source, say so clearly.
+"""
+
 # Initialize chat history
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
@@ -409,7 +437,7 @@ if user_input:
     ])
 
     full_prompt = f"""
-{build_context(filtered)}
+{build_full_context(filtered, get_vectorstore(), user_input)}
 
 CONVERSATION SO FAR:
 {history_text}
