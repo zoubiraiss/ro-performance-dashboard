@@ -1,6 +1,8 @@
 import pandas as pd
 import numpy as np
 import streamlit as st
+from config import QPR, QCR
+
 
 @st.cache_data
 def load_data(file):
@@ -32,6 +34,6 @@ def load_data(file):
                              df['feed_conductivity']) * 100
 
     df['TCF']           = np.exp(2640 * (1/(273 + df['temperature']) - 1/298))
-    df['normalized_dp'] = df['dp'] * df['TCF']
+    df['normalized_dp'] = df['dp'] * ((QPR/2 + QCR)/ (df['permeate_flow']/2 + df['reject_flow']))**1.4 * (1 + 0.01*(df['temperature']-25))
 
     return df
