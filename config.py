@@ -17,3 +17,6 @@ VECTORSTORE_DIR = "vectorstore"
 DP_WATCH = 6.5
 DP_ACTION = 6.8
 MAX_CONDUCTIVITY = 125
+
+Qpr = 11.82 
+Qcr = 3.94
