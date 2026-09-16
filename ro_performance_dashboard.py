@@ -124,14 +124,11 @@ if uploaded_file:
                        labels={'pressure': 'Pressure (bar)'})
         fig4.update_traces(connectgaps=True)
         st.plotly_chart(fig4, use_container_width=True)
-    
-    # ── Normalized DP trend ────────────────────────────────────
-    st.subheader("Normalized differential pressure trend")
-    st.caption("Temperature-corrected to 25°C — CPA7-LD-4040 Hydranautics specification")
-
-    fig_dp = px.line(filtered, x='date', y='normalized_dp',
+    #___Defferential pressure trend_____________________________
+    st.subheader("Defferential perssure trend")
+    fig_dp = px.line(filtered, x='date', y='dp',
                      color='train', markers=True,
-                     labels={'normalized_dp': 'Normalized DP (bar)'})
+                     labels={'dp':'dp (bar)'})
     fig_dp.add_hline(y=6.5, line_dash="dash",
                      line_color="orange",
                      annotation_text="Watch: 6.5 bar")
@@ -140,6 +137,14 @@ if uploaded_file:
                      annotation_text="CIP required: 6.8 bar")
     fig_dp.update_traces(connectgaps=True)
     st.plotly_chart(fig_dp, use_container_width=True)
+    # ── Normalized DP trend ────────────────────────────────────
+    st.subheader("Normalized differential pressure trend")
+    st.caption("Corrected for temperature and flow rate — CPA7-LD-4040 Hydranautics specification")
+    fig_ndp = px.line(filtered, x='date', y='normalized_dp',
+                     color='train', markers=True,
+                     labels={'normalized_dp': 'Normalized DP (bar)'})
+    fig_ndp.update_traces(connectgaps=True)
+    st.plotly_chart(fig_ndp, use_container_width=True)
 
     st.divider()
 
