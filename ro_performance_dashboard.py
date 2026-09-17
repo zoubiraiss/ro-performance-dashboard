@@ -138,11 +138,17 @@ if uploaded_file:
     fig_dp.update_traces(connectgaps=True)
     st.plotly_chart(fig_dp, use_container_width=True)
     # ── Normalized DP trend ────────────────────────────────────
-    st.subheader("Normalized differential pressure trend")
+    st.subheader("Normalized differential pressure trend (% of baseline)")
     st.caption("Corrected for temperature and flow rate — CPA7-LD-4040 Hydranautics specification")
-    fig_ndp = px.line(filtered, x='date', y='normalized_dp',
+    fig_ndp = px.line(filtered, x='date', y='ndp_percent',
                      color='train', markers=True,
-                     labels={'normalized_dp': 'Normalized DP (bar)'})
+                     labels={'ndp_percent': 'Normalized DP % of baseline'})
+    fig_ndp.add_hline(y=110 , line_dash="dash",
+                      line_color="orange",
+                      annotation_text="Schedule CIP:110%")
+    fig_ndp.add_hline(y=115 , line_dash="dash",
+                      line_color="red",
+                      annotation_text="Mandatory CIP:115%")
     fig_ndp.update_traces(connectgaps=True)
     st.plotly_chart(fig_ndp, use_container_width=True)
 
