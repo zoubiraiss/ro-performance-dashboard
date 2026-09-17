@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import streamlit as st
-from config import QPR, QCR
+from config import QPR, QCR, NDP_BASELINE
 
 
 @st.cache_data
@@ -35,5 +35,6 @@ def load_data(file):
 
     df['TCF']           = np.exp(2640 * (1/(273 + df['temperature']) - 1/298))
     df['normalized_dp'] = df['dp'] * ((QPR/2 + QCR)/ (df['permeate_flow']/2 + df['reject_flow']))**1.4 * (1 + 0.01*(df['temperature']-25))
+    df['ndp_percent'] = (df['normalized_dp'] / NDP_BASELINE) * 100
 
     return df
