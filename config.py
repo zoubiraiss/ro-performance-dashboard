@@ -20,3 +20,4 @@ MAX_CONDUCTIVITY = 125
 
 QPR = 11.82 
 QCR = 3.94
+NDP_BASELINE = 8.1 # bar, actual startup NDP reading, per commissioning document
