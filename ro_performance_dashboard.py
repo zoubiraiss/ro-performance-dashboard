@@ -214,7 +214,8 @@ if uploaded_file:
     else:
         st.success("No anomalies detected — no report needed.")
 
-    # ── CIP Recommendations ─────────────────────────────────
+    
+   # ── CIP Recommendations ─────────────────────────────────
     st.divider()
     st.subheader("🔧 CIP Recommendation Engine")
     st.caption("Based on contractor specification: Watch > 6.5 bar | Action > 6.8 bar")
@@ -223,11 +224,12 @@ if uploaded_file:
 
     for _, row in cip_df.iterrows():
         st.markdown(f"### {row['train']}")
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         col1.metric("Current DP", f"{row['latest_dp']} bar",
                     delta=f"{row['dp_trend_7days']:+.3f} bar (7-day trend)")
         col2.metric("Days to warning threshold", str(row['days_to_warning']))
         col3.metric("CIP status", "Required" if row['latest_dp'] > 6.8 else "Not required")
+        col4.metric("NDP % of baseline", f"{row['latest_ndp_percent']}%")
 
         if "🔴" in row['status']:
             st.error(row['status'])
@@ -235,6 +237,13 @@ if uploaded_file:
             st.warning(row['status'])
         else:
             st.success(row['status'])
+
+        if "🔴" in row['ndp_status']:
+            st.error(row['ndp_status'])
+        elif "🟡" in row['ndp_status']:
+            st.warning(row['ndp_status'])
+        else:
+            st.success(row['ndp_status'])
 
         st.info(f"**Recommendation:** {row['cip_type']}")
         st.divider()
