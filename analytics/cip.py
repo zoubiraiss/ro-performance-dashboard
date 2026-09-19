@@ -9,6 +9,14 @@ def cip_recommendation(df):
         latest_dp = train_data['dp'].iloc[-1]
         first_dp = train_data['dp'].tail(7).iloc[0]
         dp_trend = latest_dp - first_dp
+        latest_ndp = train_data['ndp_percent'].iloc[-1]
+
+        if latest_ndp > 115:
+            ndp_status = "🔴 Mandatory CIP — NDP exceeds 115% of baseline"
+        elif latest_ndp > 110:
+            ndp_status = "🟡 Schedule CIP — NDP exceeds 110% of baseline"
+        else:
+            ndp_status = "🟢 Normal — NDP within baseline range"
 
         if latest_dp > 6.8:
             status = "🔴 ACTION REQUIRED — Start CIP immediately"
@@ -39,7 +47,9 @@ def cip_recommendation(df):
             'dp_trend_7days': round(dp_trend, 3),
             'status': status,
             'days_to_warning': days_until_warning if days_until_warning < 999 else "Not imminent",
-            'cip_type': cip_type
+            'cip_type': cip_type,
+            'latest_ndp_percent': round(latest_ndp, 1),
+            'ndp_status': ndp_status
         })
 
     return pd.DataFrame(recommendations)
